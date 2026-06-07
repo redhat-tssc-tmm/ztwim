@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consumer
+  namespace: ztwim-demo
+  labels:
+    app: consumer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: consumer
+  template:
+    metadata:
+      labels:
+        app: consumer
+    spec:
+      serviceAccountName: consumer
+      containers:
+        - name: consumer
+          image: image-registry.openshift-image-registry.svc:5000/ztwim-demo/ztwim-demo:latest
+          command: ["python", "/app/consumer.py"]
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: DATA_SERVICE_URL
+              value: "https://data-service.ztwim-demo.svc:8443/secret"
+            - name: SVID_DIR
+              value: "/certs"
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+        - name: spiffe-helper
+          image: registry.redhat.io/zero-trust-workload-identity-manager/spiffe-helper-rhel9:v0.10.0
+          args: ["-config", "/config/helper.conf"]
+          volumeMounts:
+            - name: spiffe
+              mountPath: /spiffe-workload
+              readOnly: true
+            - name: certs
+              mountPath: /certs
+            - name: helper-config
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: spiffe
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+        - name: certs
+          emptyDir: {}
+        - name: helper-config
+          configMap:
+            name: spiffe-helper-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: consumer
+  namespace: ztwim-demo
+spec:
+  selector:
+    app: consumer
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: consumer
+  namespace: ztwim-demo
+spec:
+  to:
+    kind: Service
+    name: consumer
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

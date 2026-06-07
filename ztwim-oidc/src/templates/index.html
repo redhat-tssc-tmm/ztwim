@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ZTWIM OIDC Demo — JWT-SVID Authentication</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --card-bg: #16213e;
+    --text: #e0e0e0;
+    --accent-ok: #00c853;
+    --accent-err: #ff1744;
+    --muted: #8899aa;
+    --border: #2a3a5e;
+    --jwt-bg: #0d1117;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 24px;
+  }
+  h1 { font-size: 1.6rem; margin-bottom: 8px; }
+  .subtitle { color: var(--muted); margin-bottom: 24px; font-size: 0.95rem; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .card h2 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+  .field { margin-bottom: 10px; }
+  .field-label { font-size: 0.78rem; color: var(--muted); margin-bottom: 2px; }
+  .field-value { font-family: 'Fira Code', 'Consolas', monospace; font-size: 0.9rem; word-break: break-all; }
+  .spiffe-id { color: #64b5f6; font-weight: 600; }
+  .aud-ok { color: var(--accent-ok); }
+  .aud-err { color: var(--accent-err); }
+
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin-bottom: 12px;
+  }
+  .status-badge.ok { background: rgba(0,200,83,0.15); color: var(--accent-ok); border: 1px solid rgba(0,200,83,0.3); }
+  .status-badge.err { background: rgba(255,23,68,0.15); color: var(--accent-err); border: 1px solid rgba(255,23,68,0.3); }
+
+  .jwt-box {
+    background: var(--jwt-bg);
+    border-radius: 8px;
+    padding: 14px;
+    font-family: 'Fira Code', 'Consolas', monospace;
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+    max-height: 180px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+  }
+
+  .response-box {
+    background: var(--jwt-bg);
+    border-radius: 8px;
+    padding: 14px;
+    font-family: 'Fira Code', 'Consolas', monospace;
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+  }
+
+  .log-table { width: 100%; border-collapse: collapse; }
+  .log-table th {
+    text-align: left;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .log-table td {
+    padding: 6px 10px;
+    font-size: 0.82rem;
+    font-family: 'Fira Code', 'Consolas', monospace;
+    border-bottom: 1px solid rgba(42,58,94,0.4);
+  }
+  .log-table tr.ok td:nth-child(3) { color: var(--accent-ok); }
+  .log-table tr.err td:nth-child(3) { color: var(--accent-err); }
+
+  .full-width { grid-column: 1 / -1; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .dot.ok { background: var(--accent-ok); box-shadow: 0 0 8px var(--accent-ok); }
+  .dot.err { background: var(--accent-err); box-shadow: 0 0 8px var(--accent-err); }
+  .refresh-note { color: var(--muted); font-size: 0.75rem; text-align: right; margin-top: 8px; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+  .tag-oidc { background: rgba(100,181,246,0.2); color: #64b5f6; border: 1px solid rgba(100,181,246,0.3); }
+</style>
+</head>
+<body>
+
+<h1>Zero Trust Workload Identity Manager — OIDC Demo <span class="tag tag-oidc">JWT-SVID</span></h1>
+<p class="subtitle">This workload authenticates to Trusted Profile Analyzer using a SPIFFE JWT-SVID presented as a standard OIDC Bearer token.</p>
+
+<div class="grid">
+  <div class="card">
+    <h2>My OIDC Identity (JWT-SVID)</h2>
+    <div class="field">
+      <div class="field-label">SPIFFE ID (sub claim)</div>
+      <div class="field-value spiffe-id" id="spiffe-id">loading...</div>
+    </div>
+    <div class="field">
+      <div class="field-label">Audience (aud claim)</div>
+      <div class="field-value" id="audience">—</div>
+    </div>
+    <div class="field">
+      <div class="field-label">Issuer (iss claim)</div>
+      <div class="field-value" id="issuer">—</div>
+    </div>
+    <div class="field">
+      <div class="field-label">Expires</div>
+      <div class="field-value" id="expires">—</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Keycloak Token Exchange</h2>
+    <div class="field">
+      <div class="field-label">Status</div>
+      <div class="field-value" id="exchange-status" style="font-weight:600">—</div>
+    </div>
+    <div class="field">
+      <div class="field-label">Keycloak Token (azp, sub, preferred_username)</div>
+      <div class="jwt-box" id="kc-token" style="max-height:none">{}</div>
+    </div>
+  </div>
+
+  <div class="card full-width">
+    <h2>Access Attempt → Trusted Profile Analyzer</h2>
+    <div class="field">
+      <div class="field-label">Target</div>
+      <div class="field-value" id="target-url" style="font-size:0.8rem">—</div>
+    </div>
+    <div id="status-container" style="margin: 14px 0;">
+      <span class="status-badge" id="status-badge">
+        <span class="dot" id="status-dot"></span>
+        <span id="status-text">Waiting...</span>
+      </span>
+    </div>
+    <div class="field">
+      <div class="field-label">Response</div>
+      <div class="response-box" id="response-body">waiting for first request...</div>
+    </div>
+  </div>
+
+  <div class="card full-width">
+    <h2>JWT-SVID Token (decoded)</h2>
+    <div class="grid" style="grid-template-columns: 1fr 2fr; gap: 12px; margin: 0;">
+      <div>
+        <div class="field-label">Header</div>
+        <div class="jwt-box" id="jwt-header">{}</div>
+      </div>
+      <div>
+        <div class="field-label">Payload</div>
+        <div class="jwt-box" id="jwt-payload">{}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card full-width">
+    <h2>Access Log</h2>
+    <table class="log-table">
+      <thead>
+        <tr><th>Timestamp</th><th>SPIFFE ID</th><th>Exchange</th><th>Result</th><th>HTTP</th></tr>
+      </thead>
+      <tbody id="log-body">
+        <tr><td colspan="5" style="color: var(--muted);">No requests yet...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="refresh-note">Auto-refreshes every 5 seconds | <span id="last-update">—</span></div>
+
+<script>
+async function refresh() {
+  try {
+    const resp = await fetch('/api/status');
+    const data = await resp.json();
+
+    document.getElementById('spiffe-id').textContent = data.spiffe_id || '—';
+    document.getElementById('issuer').textContent = data.issuer || '—';
+    document.getElementById('expires').textContent = data.expires || '—';
+    document.getElementById('target-url').textContent = data.target_url || '—';
+    document.getElementById('last-update').textContent = data.timestamp || '—';
+
+    const audEl = document.getElementById('audience');
+    audEl.textContent = data.audience || '—';
+
+    document.getElementById('jwt-header').textContent = JSON.stringify(data.jwt_header, null, 2);
+    document.getElementById('jwt-payload').textContent = JSON.stringify(data.jwt_payload, null, 2);
+
+    const exchangeEl = document.getElementById('exchange-status');
+    exchangeEl.textContent = data.keycloak_exchange_status || '—';
+    exchangeEl.style.color = data.keycloak_exchange_status === 'SUCCESS' ? 'var(--accent-ok)' : 'var(--accent-err)';
+    document.getElementById('kc-token').textContent = JSON.stringify(data.keycloak_token_payload, null, 2);
+
+    if (data.last_result) {
+      const authorized = data.last_result.authorized;
+      const badge = document.getElementById('status-badge');
+      const dot = document.getElementById('status-dot');
+      const text = document.getElementById('status-text');
+
+      if (authorized) {
+        badge.className = 'status-badge ok';
+        dot.className = 'dot ok';
+        text.textContent = 'ACCESS GRANTED';
+        audEl.className = 'field-value aud-ok';
+      } else {
+        badge.className = 'status-badge err';
+        dot.className = 'dot err';
+        text.textContent = 'ACCESS DENIED';
+        audEl.className = 'field-value aud-err';
+      }
+
+      const body = data.last_result.body;
+      let display = body;
+      if (authorized && Array.isArray(body.items)) {
+        display = { total: body.total, items: body.items.map(i => ({ id: i.identifier || i.id, title: (i.title || '').substring(0, 80) })) };
+      }
+      document.getElementById('response-body').textContent = JSON.stringify(display, null, 2);
+    }
+
+    const logBody = document.getElementById('log-body');
+    if (data.access_log && data.access_log.length > 0) {
+      logBody.innerHTML = data.access_log.map(entry => {
+        const cls = entry.authorized ? 'ok' : 'err';
+        const result = entry.authorized ? 'GRANTED' : 'DENIED';
+        const sid = (entry.spiffe_id || '').replace('spiffe://idc.com/', '');
+        return `<tr class="${cls}">
+          <td>${entry.timestamp}</td>
+          <td>${sid}</td>
+          <td>${entry.exchange || '—'}</td>
+          <td>${result}</td>
+          <td>${entry.status_code}</td>
+        </tr>`;
+      }).join('');
+    }
+  } catch (e) {
+    console.error('Refresh failed:', e);
+  }
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

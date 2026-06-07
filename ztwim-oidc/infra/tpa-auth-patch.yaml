@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: server-auth
+  namespace: trusted-profile-analyzer
+data:
+  auth.yaml: |
+    authentication:
+      clients:
+
+        - clientId: tpa-frontend
+          issuerUrl: https://sso.apps.cluster-ngll2.dynamic2.redhatworkshops.io/realms/backstage
+          scopeMappings: &keycloakScopeMappings
+            "create:document": [ "create.advisory", "create.importer", "create.metadata", "create.sbom", "create.weakness", "upload.dataset" ]
+            "read:document": [ "ai", "read.advisory", "read.importer", "read.metadata", "read.sbom", "read.weakness", "read.systemInformation" ]
+            "update:document": [ "update.advisory", "update.importer", "update.metadata", "update.sbom", "update.weakness" ]
+            "delete:document": [ "delete.advisory", "delete.importer", "delete.metadata", "delete.sbom", "delete.vulnerability", "delete.weakness" ]
+
+        - clientId: tpa-cli
+          issuerUrl: https://sso.apps.cluster-ngll2.dynamic2.redhatworkshops.io/realms/backstage
+          scopeMappings: *keycloakScopeMappings
+
+        - clientId: spiffe-consumer
+          issuerUrl: https://sso.apps.cluster-ngll2.dynamic2.redhatworkshops.io/realms/backstage
+          scopeMappings:
+            "read:document": [ "read.advisory", "read.importer", "read.metadata", "read.sbom", "read.weakness", "read.systemInformation" ]

@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oidc-proxy
+  namespace: ztwim-oidc
+  labels:
+    app: oidc-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oidc-proxy
+  template:
+    metadata:
+      labels:
+        app: oidc-proxy
+    spec:
+      containers:
+        - name: oidc-proxy
+          image: image-registry.openshift-image-registry.svc:5000/ztwim-oidc/ztwim-oidc:latest
+          command: ["python", "/app/oidc_proxy.py"]
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: SPIRE_OIDC_URL
+              value: "https://spire-oidc.apps.cluster-ngll2.dynamic2.redhatworkshops.io"
+            - name: PROXY_EXTERNAL_URL
+              value: "https://spire-oidc-proxy-ztwim-oidc.apps.cluster-ngll2.dynamic2.redhatworkshops.io"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oidc-proxy
+  namespace: ztwim-oidc
+spec:
+  selector:
+    app: oidc-proxy
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: spire-oidc-proxy
+  namespace: ztwim-oidc
+spec:
+  to:
+    kind: Service
+    name: oidc-proxy
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

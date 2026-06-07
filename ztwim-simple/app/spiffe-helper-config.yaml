@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spiffe-helper-config
+  namespace: ztwim-demo
+data:
+  helper.conf: |
+    agent_address = "/spiffe-workload/spire-agent.sock"
+    svid_file_name = "/certs/tls.crt"
+    svid_key_file_name = "/certs/tls.key"
+    svid_bundle_file_name = "/certs/bundle.crt"
+    daemon_mode = true

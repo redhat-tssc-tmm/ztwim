@@ -1,0 +1,22 @@
+apiVersion: operator.openshift.io/v1alpha1
+kind: SpireServer
+metadata:
+  name: cluster
+spec:
+  logLevel: info
+  logFormat: text
+  jwtIssuer: "https://spire-oidc.apps.cluster-ngll2.dynamic2.redhatworkshops.io"
+  caValidity: 24h
+  defaultX509Validity: 1h
+  defaultJWTValidity: 5m
+  caKeyType: ec-p256
+  caSubject:
+    commonName: "ZTWIM Demo CA"
+    organization: "IDC"
+    country: "US"
+  datastore:
+    databaseType: sqlite3
+    connectionString: "/run/spire/data/datastore.sqlite3"
+  persistence:
+    size: "2Gi"
+    accessMode: ReadWriteOnce

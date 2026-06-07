@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oidc-consumer
+  namespace: ztwim-oidc
+  labels:
+    app: oidc-consumer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oidc-consumer
+  template:
+    metadata:
+      labels:
+        app: oidc-consumer
+    spec:
+      serviceAccountName: oidc-consumer
+      containers:
+        - name: consumer
+          image: image-registry.openshift-image-registry.svc:5000/ztwim-oidc/ztwim-oidc:latest
+          command: ["python", "/app/consumer.py"]
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: TPA_URL
+              value: "https://server-trusted-profile-analyzer.apps.cluster-ngll2.dynamic2.redhatworkshops.io/api/v2/advisory?limit=5"
+            - name: JWT_FILE
+              value: "/certs/jwt_svid.token"
+            - name: KEYCLOAK_TOKEN_URL
+              value: "https://sso.apps.cluster-ngll2.dynamic2.redhatworkshops.io/realms/backstage/protocol/openid-connect/token"
+            - name: KC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: spiffe-consumer-secret
+                  key: client-id
+            - name: KC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: spiffe-consumer-secret
+                  key: client-secret
+            - name: KC_SUBJECT_ISSUER
+              value: "spire-oidc"
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+        - name: spiffe-helper
+          image: registry.redhat.io/zero-trust-workload-identity-manager/spiffe-helper-rhel9:v0.10.0
+          args: ["-config", "/config/helper.conf"]
+          volumeMounts:
+            - name: spiffe
+              mountPath: /spiffe-workload
+              readOnly: true
+            - name: certs
+              mountPath: /certs
+            - name: helper-config
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: spiffe
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+        - name: certs
+          emptyDir: {}
+        - name: helper-config
+          configMap:
+            name: spiffe-helper-authorized
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oidc-consumer
+  namespace: ztwim-oidc
+spec:
+  selector:
+    app: oidc-consumer
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: oidc-consumer
+  namespace: ztwim-oidc
+spec:
+  to:
+    kind: Service
+    name: oidc-consumer
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
