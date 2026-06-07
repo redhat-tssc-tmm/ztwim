@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: spiffe-helper-config
-  namespace: ztwim-demo
+  namespace: ztwim-simple
 data:
   helper.conf: |
     agent_address = "/spiffe-workload/spire-agent.sock"

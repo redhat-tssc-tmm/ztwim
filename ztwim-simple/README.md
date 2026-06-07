@@ -14,7 +14,7 @@ Both consumer dashboards are exposed via OpenShift Routes so you can open them s
                         ┌──────────────────────────────────┐
     Browser ◄───────────┤  consumer (web frontend :8080)   │
     (Route)             │  SA: consumer                    │
-                        │  spiffe://idc.com/ns/ztwim-demo/ │
+                        │  spiffe://idc.com/ns/ztwim-simple/ │
                         │    sa/consumer                    │
                         └──────────┬───────────────────────┘
                                    │ mTLS (SVID)
@@ -31,7 +31,7 @@ Both consumer dashboards are exposed via OpenShift Routes so you can open them s
                         ┌──────────┴───────────────────────┐
     Browser ◄───────────┤  consumer-unauthorized            │
     (Route)             │  SA: consumer-unauthorized        │
-                        │  spiffe://idc.com/ns/ztwim-demo/ │
+                        │  spiffe://idc.com/ns/ztwim-simple/ │
                         │    sa/consumer-unauthorized       │
                         └──────────────────────────────────┘
 ```
@@ -90,15 +90,15 @@ oc apply -f app/spiffe-helper-config.yaml
 ```
 
 This creates:
-- Namespace `ztwim-demo` with label `spiffe.io/demo: "true"`
+- Namespace `ztwim-simple` with label `spiffe.io/demo: "true"`
 - Three ServiceAccounts: `data-service`, `consumer`, `consumer-unauthorized`
 - A `ClusterSPIFFEID` that assigns SPIFFE IDs based on namespace and ServiceAccount: `spiffe://idc.com/ns/<namespace>/sa/<service-account>`
 
 ### 3. Build the Container Image
 
 ```bash
-oc new-build --binary --name=ztwim-demo -n ztwim-demo --strategy=docker
-oc start-build ztwim-demo --from-dir=src/ -n ztwim-demo --follow
+oc new-build --binary --name=ztwim-simple -n ztwim-simple --strategy=docker
+oc start-build ztwim-simple --from-dir=src/ -n ztwim-simple --follow
 ```
 
 ### 4. Deploy the Workloads
@@ -112,7 +112,7 @@ oc apply -f app/consumer-unauthorized.yaml
 Wait for all pods to be running (2/2 — app + spiffe-helper sidecar):
 
 ```bash
-oc get pods -n ztwim-demo -w
+oc get pods -n ztwim-simple -w
 ```
 
 ### 5. Access the Dashboards
@@ -120,7 +120,7 @@ oc get pods -n ztwim-demo -w
 Get the Route URLs:
 
 ```bash
-oc get routes -n ztwim-demo
+oc get routes -n ztwim-simple
 ```
 
 Open both URLs in a browser side-by-side:
@@ -131,17 +131,108 @@ Open both URLs in a browser side-by-side:
 
 ```bash
 # Check authorized consumer — should show AUTHORIZED
-oc logs -n ztwim-demo deploy/consumer -c consumer --tail=5
+oc logs -n ztwim-simple deploy/consumer -c consumer --tail=5
 
 # Check unauthorized consumer — should show DENIED with HTTP 403
-oc logs -n ztwim-demo deploy/consumer-unauthorized -c consumer --tail=5
+oc logs -n ztwim-simple deploy/consumer-unauthorized -c consumer --tail=5
 
 # Check data-service — should show ALLOWED and DENIED entries
-oc logs -n ztwim-demo deploy/data-service -c data-service --tail=10
+oc logs -n ztwim-simple deploy/data-service -c data-service --tail=10
 
 # Inspect an SVID certificate
-oc exec -n ztwim-demo deploy/consumer -c consumer -- \
+oc exec -n ztwim-simple deploy/consumer -c consumer -- \
   openssl x509 -in /certs/tls.crt -text -noout | grep -E "URI:|Issuer:|Not After"
+```
+
+## What the Logs Show
+
+All three workloads produce step-by-step debug logs that walk through the mTLS + SPIFFE ID validation flow. This makes the logs suitable for live demo narration.
+
+### data-service startup
+
+```
+[data-service] SVID files found (delivered by spiffe-helper sidecar via SPIRE Workload API)
+[data-service] My SPIFFE ID: spiffe://idc.com/ns/ztwim-simple/sa/data-service
+[data-service] mTLS server configured:
+[data-service]   - Server certificate: /certs/tls.crt (X.509 SVID)
+[data-service]   - Client auth: REQUIRED (mutual TLS)
+[data-service]   - Trust anchor: /certs/bundle.crt (SPIRE CA bundle)
+[data-service]   - Listening on port 8443
+[data-service] Allow-list (SPIFFE IDs that can access /secret):
+[data-service]   - spiffe://idc.com/ns/ztwim-simple/sa/consumer
+[data-service] Ready to serve requests.
+```
+
+### data-service handling a request (granted)
+
+```
+[data-service] --- Incoming request from 10.233.0.77 ---
+[data-service]   Step 1: mTLS handshake completed (client presented a valid X.509 SVID)
+[data-service]   Step 2: Extracting client certificate SAN (Subject Alternative Name)...
+[data-service]   Step 3: Client SPIFFE ID from certificate: spiffe://idc.com/ns/ztwim-simple/sa/consumer
+[data-service]   Step 4: Checking SPIFFE ID against allow-list: [...]
+[data-service]   Step 5: RESULT -> ACCESS GRANTED (SPIFFE ID is on the allow-list)
+```
+
+### data-service handling a request (denied)
+
+```
+[data-service] --- Incoming request from 10.234.0.38 ---
+[data-service]   Step 1: mTLS handshake completed (client presented a valid X.509 SVID)
+[data-service]   Step 2: Extracting client certificate SAN (Subject Alternative Name)...
+[data-service]   Step 3: Client SPIFFE ID from certificate: spiffe://idc.com/ns/ztwim-simple/sa/consumer-unauthorized
+[data-service]   Step 4: Checking SPIFFE ID against allow-list: [...]
+[data-service]   Step 5: RESULT -> ACCESS DENIED (SPIFFE ID '...' is NOT on the allow-list)
+```
+
+### consumer startup
+
+```
+[consumer] SVID files received from SPIRE (via spiffe-helper sidecar)
+[consumer]   My SPIFFE ID:    spiffe://idc.com/ns/ztwim-simple/sa/consumer
+[consumer]   Certificate:     /certs/tls.crt
+[consumer]   Serial:          c0:fb:6b:f6:0f:6c:34:b4:...
+[consumer]   Expires:         Jun  6 19:07:44 2026 GMT
+[consumer]   Issuer (CA):     C=US, O=IDC, CN=ZTWIM Demo CA, ...
+[consumer] Target data-service: https://data-service.ztwim-simple.svc:8443/secret
+[consumer] Will attempt mTLS connection every 5s, presenting my SVID as client certificate
+```
+
+### consumer per-request flow (authorized)
+
+```
+[consumer] --- Request #1 to data-service ---
+[consumer]   Step 1: Loading my X.509 SVID for mTLS client authentication
+[consumer]            Identity: spiffe://idc.com/ns/ztwim-simple/sa/consumer
+[consumer]   Step 2: Connecting to https://data-service.ztwim-simple.svc:8443/secret
+[consumer]            Using mutual TLS (presenting my SVID as client certificate)
+[consumer]   Step 3: mTLS handshake succeeded (data-service verified my SVID)
+[consumer]   Step 4: RESULT -> ACCESS GRANTED (HTTP 200)
+[consumer]            data-service confirmed my SPIFFE ID is on the allow-list
+```
+
+### consumer per-request flow (unauthorized)
+
+```
+[consumer] --- Request #1 to data-service ---
+[consumer]   Step 1: Loading my X.509 SVID for mTLS client authentication
+[consumer]            Identity: spiffe://idc.com/ns/ztwim-simple/sa/consumer-unauthorized
+[consumer]   Step 2: Connecting to https://data-service.ztwim-simple.svc:8443/secret
+[consumer]            Using mutual TLS (presenting my SVID as client certificate)
+[consumer]   Step 3: mTLS handshake succeeded (my SVID is valid)
+[consumer]   Step 4: RESULT -> ACCESS DENIED (HTTP 403)
+[consumer]            data-service rejected my SPIFFE ID — not on the allow-list
+[consumer]            Allowed: ['spiffe://idc.com/ns/ztwim-simple/sa/consumer']
+```
+
+### SVID rotation
+
+When SPIRE rotates certificates (default: every hour), both consumers and the data-service log the event:
+
+```
+[data-service] SVID rotated — reloaded TLS context (my identity: spiffe://idc.com/ns/ztwim-simple/sa/data-service)
+[consumer] SVID certificate rotated by SPIRE (new serial: a1:b2:c3:...)
+[consumer]   New expiry: Jun  7 19:07:44 2026 GMT
 ```
 
 ## Cleanup
@@ -176,7 +267,7 @@ idc-demo/
 │   ├── spiffe-csi-driver.yaml      #   SPIFFE CSI Driver
 │   └── spire-oidc-discovery.yaml   #   OIDC Discovery Provider
 ├── app/                            # Demo application (namespace-scoped)
-│   ├── namespace.yaml              #   Namespace ztwim-demo
+│   ├── namespace.yaml              #   Namespace ztwim-simple
 │   ├── service-accounts.yaml       #   3 ServiceAccounts
 │   ├── cluster-spiffeid.yaml       #   SPIFFE ID template assignment
 │   ├── spiffe-helper-config.yaml   #   spiffe-helper sidecar config
