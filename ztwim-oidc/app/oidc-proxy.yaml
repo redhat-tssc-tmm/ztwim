@@ -24,9 +24,9 @@ spec:
               name: http
           env:
             - name: SPIRE_OIDC_URL
-              value: "https://spire-oidc.apps.cluster-ngll2.dynamic2.redhatworkshops.io"
+              value: "https://spire-oidc.apps.cluster-lcfc2.dynamic2.redhatworkshops.io"
             - name: PROXY_EXTERNAL_URL
-              value: "https://spire-oidc-proxy-ztwim-oidc.apps.cluster-ngll2.dynamic2.redhatworkshops.io"
+              value: "https://spire-oidc-proxy-ztwim-oidc.apps.cluster-lcfc2.dynamic2.redhatworkshops.io"
 ---
 apiVersion: v1
 kind: Service

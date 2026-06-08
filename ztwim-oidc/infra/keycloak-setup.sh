@@ -109,24 +109,36 @@ echo "=== Creating token exchange policy ==="
 REALM_MGMT_UUID=$(curl -sk "${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/clients?clientId=realm-management" \
   -H "Authorization: Bearer $ADMIN_TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])")
 
-POLICY_ID=$(curl -sk -X POST "${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/clients/${REALM_MGMT_UUID}/authz/resource-server/policy/client" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"name\": \"spiffe-consumer-policy\",
-    \"description\": \"Allow spiffe-consumer to exchange tokens\",
-    \"logic\": \"POSITIVE\",
-    \"clients\": [\"${CLIENT_UUID}\"]
-  }" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
-echo "  Policy ID: $POLICY_ID"
+POLICY_EXISTS=$(curl -sk "${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/clients/${REALM_MGMT_UUID}/authz/resource-server/policy?name=spiffe-consumer-policy" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
 
-# Associate policy with the token-exchange permission
+if [ "$POLICY_EXISTS" = "0" ]; then
+  POLICY_ID=$(curl -sk -X POST "${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/clients/${REALM_MGMT_UUID}/authz/resource-server/policy/client" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"name\": \"spiffe-consumer-policy\",
+      \"description\": \"Allow spiffe-consumer to exchange tokens\",
+      \"logic\": \"POSITIVE\",
+      \"clients\": [\"${CLIENT_UUID}\"]
+    }" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+  echo "  Created policy: $POLICY_ID"
+else
+  POLICY_ID=$(curl -sk "${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/clients/${REALM_MGMT_UUID}/authz/resource-server/policy?name=spiffe-consumer-policy" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])")
+  echo "  Policy exists: $POLICY_ID"
+fi
+
+# Always ensure policy is associated — use the actual permission name to avoid 409
+PERM_NAME=$(curl -sk "${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/clients/${REALM_MGMT_UUID}/authz/resource-server/permission/scope/${PERM_ID}" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])")
+
 curl -sk -X PUT "${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/clients/${REALM_MGMT_UUID}/authz/resource-server/permission/scope/${PERM_ID}" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d "{
     \"id\": \"${PERM_ID}\",
-    \"name\": \"token-exchange.permission.idp.spire-oidc\",
+    \"name\": \"${PERM_NAME}\",
     \"type\": \"scope\",
     \"logic\": \"POSITIVE\",
     \"decisionStrategy\": \"UNANIMOUS\",

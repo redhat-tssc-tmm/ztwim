@@ -45,7 +45,7 @@ wait_for_pods() {
   while [ $elapsed -lt $timeout ]; do
     local running
     running=$(oc get pods -n "$ns" -l "$label" --no-headers 2>/dev/null \
-      | grep -v Terminating | grep -v Completed | grep Running | wc -l)
+      | grep -v Terminating | grep -v Completed | grep Running | wc -l || echo 0)
     if [ "$running" -ge "$expected" ]; then
       log "  $running/$expected pods running."
       return 0

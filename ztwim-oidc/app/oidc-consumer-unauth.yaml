@@ -25,11 +25,11 @@ spec:
               name: http
           env:
             - name: TPA_URL
-              value: "https://server-trusted-profile-analyzer.apps.cluster-ngll2.dynamic2.redhatworkshops.io/api/v2/advisory?limit=5"
+              value: "https://server-trusted-profile-analyzer.apps.cluster-lcfc2.dynamic2.redhatworkshops.io/api/v2/advisory?limit=5"
             - name: JWT_FILE
               value: "/certs/jwt_svid.token"
             - name: KEYCLOAK_TOKEN_URL
-              value: "https://sso.apps.cluster-ngll2.dynamic2.redhatworkshops.io/realms/backstage/protocol/openid-connect/token"
+              value: "https://sso.apps.cluster-lcfc2.dynamic2.redhatworkshops.io/realms/backstage/protocol/openid-connect/token"
             - name: KC_CLIENT_ID
               valueFrom:
                 secretKeyRef:

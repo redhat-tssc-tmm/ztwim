@@ -86,7 +86,7 @@ wait_for_pods() {
   while [ $elapsed -lt $timeout ]; do
     local running
     running=$(oc get pods -n "$ns" -l "$label" --no-headers 2>/dev/null \
-      | grep -v Terminating | grep -v Completed | grep Running | wc -l)
+      | grep -v Terminating | grep -v Completed | grep Running | wc -l || echo 0)
     if [ "$running" -ge "$expected" ]; then
       log "  $running/$expected pods running."
       return 0
@@ -385,23 +385,28 @@ if [ "$POLICY_EXISTS" = "0" ]; then
       \"clients\": [\"${CLIENT_UUID}\"]
     }" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
   log "  Created token exchange policy (ID: $POLICY_ID)"
-
-  # Associate policy with the token-exchange permission
-  curl -sk -X PUT "${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/clients/${REALM_MGMT_UUID}/authz/resource-server/permission/scope/${PERM_ID}" \
-    -H "Authorization: Bearer $ADMIN_TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "{
-      \"id\": \"${PERM_ID}\",
-      \"name\": \"token-exchange.permission.idp.spire-oidc\",
-      \"type\": \"scope\",
-      \"logic\": \"POSITIVE\",
-      \"decisionStrategy\": \"UNANIMOUS\",
-      \"policies\": [\"${POLICY_ID}\"]
-    }" > /dev/null
-  log "  Associated policy with token exchange permission."
 else
-  log "  Token exchange policy already exists."
+  POLICY_ID=$(curl -sk "${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/clients/${REALM_MGMT_UUID}/authz/resource-server/policy?name=spiffe-consumer-policy" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])")
+  log "  Token exchange policy already exists (ID: $POLICY_ID)"
 fi
+
+# Always ensure the policy is associated with the token-exchange permission
+PERM_NAME=$(curl -sk "${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/clients/${REALM_MGMT_UUID}/authz/resource-server/permission/scope/${PERM_ID}" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])")
+
+curl -sk -X PUT "${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/clients/${REALM_MGMT_UUID}/authz/resource-server/permission/scope/${PERM_ID}" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"id\": \"${PERM_ID}\",
+    \"name\": \"${PERM_NAME}\",
+    \"type\": \"scope\",
+    \"logic\": \"POSITIVE\",
+    \"decisionStrategy\": \"UNANIMOUS\",
+    \"policies\": [\"${POLICY_ID}\"]
+  }" > /dev/null
+log "  Policy associated with token exchange permission."
 
 # 7f. Create K8s Secret for client credentials
 oc create secret generic spiffe-consumer-secret -n "$DEMO_NAMESPACE" \
@@ -423,58 +428,101 @@ wait_for_pods "$DEMO_NAMESPACE" "app=oidc-consumer-unauth" 1
 # ─── Step 9: Create SPIFFE users in Keycloak via initial token exchange ──────
 
 log "Step 9: Triggering initial token exchange to create SPIFFE users..."
-sleep 10
+sleep 15
 
-ADMIN_TOKEN=$(get_admin_token)
-for SA in oidc-consumer oidc-consumer-unauth; do
-  POD=$(oc get pods -n "$DEMO_NAMESPACE" -l "app=${SA}" --no-headers 2>/dev/null \
+do_token_exchange() {
+  local sa_name="$1"
+  local pod
+  pod=$(oc get pods -n "$DEMO_NAMESPACE" -l "app=${sa_name}" --no-headers 2>/dev/null \
     | grep Running | grep -v Terminating | head -1 | awk '{print $1}')
-  if [ -n "$POD" ]; then
-    JWT=$(oc exec -n "$DEMO_NAMESPACE" "$POD" -c consumer -- cat /certs/jwt_svid.token 2>/dev/null || echo "")
-    if [ -n "$JWT" ]; then
-      RESULT=$(curl -sk -X POST "${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/token" \
-        -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
-        -d "subject_token=$JWT" \
-        -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
-        -d "subject_issuer=spire-oidc" \
-        -d "client_id=${KC_CLIENT_ID}" \
-        -d "client_secret=${CLIENT_SECRET}" 2>&1)
-      STATUS=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print('OK' if 'access_token' in d else d.get('error','?'))" 2>/dev/null)
-      log "  $SA: $STATUS"
-    else
-      warn "  $SA: JWT-SVID not ready yet"
-    fi
-  else
-    warn "  $SA: pod not found"
+  if [ -z "$pod" ]; then
+    warn "  $sa_name: pod not found"
+    return 1
   fi
+  local jwt
+  jwt=$(oc exec -n "$DEMO_NAMESPACE" "$pod" -c consumer -- cat /certs/jwt_svid.token 2>/dev/null || echo "")
+  if [ -z "$jwt" ]; then
+    warn "  $sa_name: JWT-SVID not ready yet"
+    return 1
+  fi
+  local result
+  result=$(curl -sk -X POST "${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/token" \
+    -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+    -d "subject_token=$jwt" \
+    -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
+    -d "subject_issuer=spire-oidc" \
+    -d "client_id=${KC_CLIENT_ID}" \
+    -d "client_secret=${CLIENT_SECRET}" 2>&1)
+  local status
+  status=$(echo "$result" | python3 -c "import sys,json; d=json.load(sys.stdin); print('OK' if 'access_token' in d else d.get('error','?'))" 2>/dev/null)
+  log "  $sa_name: $status"
+  [ "$status" = "OK" ]
+}
+
+for SA in oidc-consumer oidc-consumer-unauth; do
+  do_token_exchange "$SA" || true
 done
 
 # ─── Step 10: Disable the unauthorized SPIFFE identity ───────────────────────
 
 log "Step 10: Disabling unauthorized SPIFFE identity in Keycloak..."
 
+# Search broadly and match precisely by username
 ADMIN_TOKEN=$(get_admin_token)
-UNAUTH_USER_ID=$(curl -sk "${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/users?search=oidc-consumer-unauth&max=5" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | python3 -c "
+UNAUTH_USER_ID=""
+for attempt in 1 2 3; do
+  UNAUTH_USER_ID=$(curl -sk "${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/users?search=spiffe&max=50" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" | python3 -c "
 import sys,json
 for u in json.load(sys.stdin):
-    if 'unauth' in u.get('username',''):
+    if u.get('username','').endswith('/sa/oidc-consumer-unauth'):
         print(u['id']); break" 2>/dev/null || echo "")
 
+  if [ -n "$UNAUTH_USER_ID" ]; then
+    break
+  fi
+
+  if [ "$attempt" -lt 3 ]; then
+    log "  User not found yet (attempt $attempt/3), waiting 15s for Keycloak to create it..."
+    sleep 15
+    ADMIN_TOKEN=$(get_admin_token)
+  fi
+done
+
 if [ -n "$UNAUTH_USER_ID" ]; then
-  curl -sk -X PUT "${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/users/${UNAUTH_USER_ID}" \
+  DISABLE_CODE=$(curl -sk -X PUT "${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/users/${UNAUTH_USER_ID}" \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"enabled": false}' > /dev/null
-  log "  Disabled user: $UNAUTH_USER_ID"
+    -d '{"enabled": false}' -w "%{http_code}" -o /dev/null 2>&1)
+
+  if [ "$DISABLE_CODE" = "204" ]; then
+    log "  Disabled user $UNAUTH_USER_ID (HTTP $DISABLE_CODE)"
+  else
+    warn "  Failed to disable user $UNAUTH_USER_ID (HTTP $DISABLE_CODE)"
+  fi
+
+  # Verify it's actually disabled
+  ADMIN_TOKEN=$(get_admin_token)
+  IS_ENABLED=$(curl -sk "${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/users/${UNAUTH_USER_ID}" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin).get('enabled','?'))" 2>/dev/null)
+
+  if [ "$IS_ENABLED" = "False" ]; then
+    log "  Verified: user is DISABLED"
+  else
+    warn "  User is still enabled=$IS_ENABLED — disabling again..."
+    ADMIN_TOKEN=$(get_admin_token)
+    curl -sk -X PUT "${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/users/${UNAUTH_USER_ID}" \
+      -H "Authorization: Bearer $ADMIN_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{"enabled": false}' > /dev/null
+  fi
 
   # Restart unauthorized consumer so it picks up the rejection
   oc rollout restart deploy/oidc-consumer-unauth -n "$DEMO_NAMESPACE"
   sleep 15
 else
-  warn "  Unauthorized SPIFFE user not found in Keycloak."
-  warn "  The initial token exchange in Step 9 may not have created it yet."
-  warn "  Wait a minute, then re-run this script — Step 9 will retry and Step 10 will find the user."
+  warn "  Unauthorized SPIFFE user not found after 3 attempts."
+  warn "  Re-run this script to retry."
 fi
 
 # ─── Step 11: Print results ──────────────────────────────────────────────────

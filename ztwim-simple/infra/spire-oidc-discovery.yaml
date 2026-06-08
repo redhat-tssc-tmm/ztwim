@@ -5,7 +5,7 @@ metadata:
 spec:
   logLevel: info
   logFormat: text
-  jwtIssuer: "https://spire-oidc.apps.cluster-ngll2.dynamic2.redhatworkshops.io"
+  jwtIssuer: "https://spire-oidc.apps.cluster-ctpgl.dynamic2.redhatworkshops.io"
   csiDriverName: "csi.spiffe.io"
   replicaCount: 1
   managedRoute: "true"

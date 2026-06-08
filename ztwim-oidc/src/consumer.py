@@ -7,6 +7,7 @@ import threading
 import time
 import urllib.request
 import urllib.error
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -38,9 +39,15 @@ current_status = {
     "timestamp": "",
 }
 
+request_count = 0
+
 tls_ctx = ssl.create_default_context()
 tls_ctx.check_hostname = False
 tls_ctx.verify_mode = ssl.CERT_NONE
+
+
+def log(msg):
+    print(f"[oidc-consumer] {msg}", flush=True)
 
 
 def decode_jwt(token):
@@ -113,11 +120,9 @@ def format_exp(exp_ts):
         return str(exp_ts)
 
 
-import urllib.parse
-
-
 def poller():
-    global current_status
+    global current_status, request_count
+    last_jwt_iat = 0
     while True:
         try:
             jwt_svid = read_jwt()
@@ -125,28 +130,72 @@ def poller():
                 time.sleep(2)
                 continue
 
+            request_count += 1
             svid_header, svid_payload = decode_jwt(jwt_svid)
             aud = svid_payload.get("aud", [])
             if isinstance(aud, list):
                 aud = ", ".join(aud)
             now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            spiffe_id = svid_payload.get("sub", "unknown")
+
+            jwt_iat = svid_payload.get("iat", 0)
+            if jwt_iat != last_jwt_iat:
+                if last_jwt_iat:
+                    log(f"JWT-SVID rotated by SPIRE (new iat={jwt_iat})")
+                    log(f"  New expiry: {format_exp(svid_payload.get('exp', 0))}")
+                last_jwt_iat = jwt_iat
+
+            log(f"--- Request #{request_count} ---")
+            log(f"  Step 1: Reading JWT-SVID from {JWT_FILE}")
+            log(f"           SPIFFE ID (sub): {spiffe_id}")
+            log(f"           Audience (aud):  {aud}")
+            log(f"           Issuer (iss):    {svid_payload.get('iss', '?')}")
+            log(f"           Expires:         {format_exp(svid_payload.get('exp', 0))}")
+
+            log(f"  Step 2: Exchanging JWT-SVID for Keycloak token (RFC 8693 token exchange)")
+            log(f"           Token endpoint:  {KEYCLOAK_TOKEN_URL}")
+            log(f"           Client ID:       {KC_CLIENT_ID}")
+            log(f"           Subject issuer:  {KC_SUBJECT_ISSUER}")
 
             kc_token, kc_error = exchange_for_keycloak_token(jwt_svid)
 
             if kc_token:
                 _, kc_payload = decode_jwt(kc_token)
-                result = call_tpa(kc_token)
                 exchange_status = "SUCCESS"
+                log(f"  Step 3: Token exchange SUCCEEDED")
+                log(f"           Keycloak issued a token with:")
+                log(f"             azp:                {kc_payload.get('azp', '?')}")
+                log(f"             preferred_username:  {kc_payload.get('preferred_username', '?')}")
+                log(f"             scope:               {kc_payload.get('scope', '?')}")
+
+                log(f"  Step 4: Calling TPA API with Keycloak token")
+                log(f"           Target: {TPA_URL}")
+                log(f"           Auth:   Authorization: Bearer <keycloak-token>")
+
+                result = call_tpa(kc_token)
+
+                if result["authorized"]:
+                    log(f"  Step 5: RESULT -> ACCESS GRANTED (HTTP {result['status_code']})")
+                    log(f"           TPA accepted the Keycloak token and returned data")
+                else:
+                    log(f"  Step 5: RESULT -> ACCESS DENIED (HTTP {result['status_code']})")
+                    log(f"           TPA rejected the request: {result['body'].get('error', result['body'].get('message', '?'))}")
             else:
                 kc_payload = kc_error or {}
-                result = {"status_code": 0, "body": {"error": f"Keycloak token exchange failed: {kc_error}"}, "authorized": False}
                 exchange_status = f"FAILED: {kc_error.get('error', 'unknown')}"
+                result = {"status_code": 0, "body": {"error": f"Keycloak token exchange failed: {kc_error}"}, "authorized": False}
+
+                log(f"  Step 3: Token exchange FAILED")
+                log(f"           Error:       {kc_error.get('error', 'unknown')}")
+                log(f"           Description: {kc_error.get('error_description', 'none')}")
+                log(f"           This SPIFFE identity is not authorized in Keycloak")
+                log(f"  Step 4: RESULT -> ACCESS DENIED (no Keycloak token, cannot call TPA)")
 
             log_entry = {
                 "timestamp": now,
                 "status_code": result["status_code"],
                 "authorized": result["authorized"],
-                "spiffe_id": svid_payload.get("sub", ""),
+                "spiffe_id": spiffe_id,
                 "exchange": exchange_status,
             }
 
@@ -154,7 +203,7 @@ def poller():
                 current_status["jwt_raw"] = jwt_svid
                 current_status["jwt_header"] = svid_header
                 current_status["jwt_payload"] = svid_payload
-                current_status["spiffe_id"] = svid_payload.get("sub", "unknown")
+                current_status["spiffe_id"] = spiffe_id
                 current_status["audience"] = aud
                 current_status["issuer"] = svid_payload.get("iss", "unknown")
                 current_status["expires"] = format_exp(svid_payload.get("exp", 0))
@@ -165,10 +214,8 @@ def poller():
                 current_status["access_log"].insert(0, log_entry)
                 current_status["access_log"] = current_status["access_log"][:50]
 
-            status_word = "AUTHORIZED" if result["authorized"] else "DENIED"
-            print(f"{now} | {status_word} | tpa={result['status_code']} | exchange={exchange_status} | sub={svid_payload.get('sub','')}")
         except Exception as e:
-            print(f"Poller error: {e}")
+            log(f"Poller error: {e}")
 
         time.sleep(POLL_INTERVAL)
 
@@ -199,18 +246,34 @@ class ConsumerHandler(http.server.BaseHTTPRequestHandler):
 
 
 def main():
-    print(f"Waiting for JWT-SVID file at {JWT_FILE}...")
+    log("Starting OIDC consumer workload")
+    log(f"Waiting for JWT-SVID file from spiffe-helper sidecar...")
+    log(f"  Looking for: {JWT_FILE}")
     while not os.path.exists(JWT_FILE):
         time.sleep(1)
-    print("JWT-SVID file found.")
-    print(f"Keycloak token exchange: {KEYCLOAK_TOKEN_URL}")
-    print(f"Keycloak client: {KC_CLIENT_ID}")
-    print(f"Target: {TPA_URL}")
+
+    jwt_svid = read_jwt()
+    _, payload = decode_jwt(jwt_svid)
+    log(f"JWT-SVID received from SPIRE (via spiffe-helper sidecar)")
+    log(f"  SPIFFE ID (sub): {payload.get('sub', '?')}")
+    log(f"  Audience (aud):  {payload.get('aud', '?')}")
+    log(f"  Issuer (iss):    {payload.get('iss', '?')}")
+    log(f"  Expires:         {format_exp(payload.get('exp', 0))}")
+    log(f"Token exchange configuration:")
+    log(f"  Keycloak URL:    {KEYCLOAK_TOKEN_URL}")
+    log(f"  Client ID:       {KC_CLIENT_ID}")
+    log(f"  Subject issuer:  {KC_SUBJECT_ISSUER} (Keycloak IDP alias for SPIRE)")
+    log(f"  Grant type:      urn:ietf:params:oauth:grant-type:token-exchange (RFC 8693)")
+    log(f"Target application:")
+    log(f"  TPA API:         {TPA_URL}")
+    log(f"  Auth method:     Bearer token (Keycloak-issued, after exchange)")
+    log(f"Flow: JWT-SVID -> Keycloak token exchange -> Keycloak access token -> TPA API")
+    log(f"Will attempt every {POLL_INTERVAL}s")
 
     poll_thread = threading.Thread(target=poller, daemon=True)
     poll_thread.start()
 
-    print(f"OIDC Consumer web UI starting on port {WEB_PORT}")
+    log(f"Web dashboard starting on port {WEB_PORT}")
     server = http.server.HTTPServer(("0.0.0.0", WEB_PORT), ConsumerHandler)
     server.serve_forever()
 
