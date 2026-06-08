@@ -32,6 +32,16 @@ TRUST_DOMAIN="${TRUST_DOMAIN:-idc.com}"
 DEMO_NAMESPACE="${DEMO_NAMESPACE:-ztwim-oidc}"
 IMAGE_NAME="${IMAGE_NAME:-ztwim-oidc}"
 
+# Set IMAGE_REGISTRY to use pre-built images from an external registry (e.g., quay.io/tssc_demos)
+# When unset, images are built in-cluster using oc new-build.
+IMAGE_REGISTRY="${IMAGE_REGISTRY:-}"
+IMAGE_TAG="${IMAGE_TAG:-latest}"
+if [ -n "$IMAGE_REGISTRY" ]; then
+  FULL_IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+else
+  FULL_IMAGE="image-registry.openshift-image-registry.svc:5000/${DEMO_NAMESPACE}/${IMAGE_NAME}:latest"
+fi
+
 # Keycloak configuration
 KEYCLOAK_NAMESPACE="${KEYCLOAK_NAMESPACE:-keycloak}"
 KEYCLOAK_CR_NAME="${KEYCLOAK_CR_NAME:-keycloak}"
@@ -175,16 +185,19 @@ log "Step 2: Updating cluster-specific values in manifests..."
 sed -i "s|value: \"https://spire-oidc\.[^\"]*\"|value: \"${SPIRE_OIDC_URL}\"|" "$SCRIPT_DIR/app/oidc-proxy.yaml"
 sed -i "s|value: \"https://spire-oidc-proxy[^\"]*\"|value: \"${OIDC_PROXY_URL}\"|" "$SCRIPT_DIR/app/oidc-proxy.yaml"
 
-# Consumer deployments — TPA URL
+# Consumer deployments — TPA URL and image
 for f in "$SCRIPT_DIR"/app/oidc-consumer.yaml "$SCRIPT_DIR"/app/oidc-consumer-unauth.yaml; do
   sed -i "s|value: \"https://server-trusted-profile-analyzer\.[^\"]*\"|value: \"${TPA_URL}/api/v2/advisory?limit=5\"|" "$f"
   sed -i "s|value: \"https://sso\.[^\"]*\"|value: \"${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/token\"|" "$f"
-  sed -i "s|image-registry.openshift-image-registry.svc:5000/[^/]*/[^:]*:latest|image-registry.openshift-image-registry.svc:5000/${DEMO_NAMESPACE}/${IMAGE_NAME}:latest|g" "$f"
+  sed -i "s|image: .*ztwim-oidc:.*|image: ${FULL_IMAGE}|g" "$f"
+  sed -i "s|image: image-registry.openshift-image-registry.svc:5000/[^/]*/[^:]*:.*|image: ${FULL_IMAGE}|g" "$f"
+  sed -i "s|image: quay.io/[^/]*/ztwim-oidc:.*|image: ${FULL_IMAGE}|g" "$f"
 done
 
 # OIDC proxy image reference
-sed -i "s|image-registry.openshift-image-registry.svc:5000/[^/]*/[^:]*:latest|image-registry.openshift-image-registry.svc:5000/${DEMO_NAMESPACE}/${IMAGE_NAME}:latest|g" \
-  "$SCRIPT_DIR/app/oidc-proxy.yaml"
+sed -i "s|image: .*ztwim-oidc:.*|image: ${FULL_IMAGE}|g" "$SCRIPT_DIR/app/oidc-proxy.yaml"
+sed -i "s|image: image-registry.openshift-image-registry.svc:5000/[^/]*/[^:]*:.*|image: ${FULL_IMAGE}|g" "$SCRIPT_DIR/app/oidc-proxy.yaml"
+sed -i "s|image: quay.io/[^/]*/ztwim-oidc:.*|image: ${FULL_IMAGE}|g" "$SCRIPT_DIR/app/oidc-proxy.yaml"
 
 log "  Manifests updated."
 
@@ -199,17 +212,21 @@ oc apply -f "$SCRIPT_DIR/app/spiffe-helper-unauthorized.yaml"
 
 # ─── Step 4: Build container image ───────────────────────────────────────────
 
-log "Step 4: Building container image..."
-
-cp "$SCRIPT_DIR/src/Containerfile" "$SCRIPT_DIR/src/Dockerfile"
-
-if oc get buildconfig "$IMAGE_NAME" -n "$DEMO_NAMESPACE" &>/dev/null; then
-  log "  BuildConfig already exists, starting new build..."
+if [ -n "$IMAGE_REGISTRY" ]; then
+  log "Step 4: Using pre-built image: $FULL_IMAGE"
+  log "  (skipping in-cluster build)"
 else
-  oc new-build --binary --name="$IMAGE_NAME" -n "$DEMO_NAMESPACE" --strategy=docker
-fi
+  log "Step 4: Building container image in-cluster..."
+  cp "$SCRIPT_DIR/src/Containerfile" "$SCRIPT_DIR/src/Dockerfile"
 
-oc start-build "$IMAGE_NAME" --from-dir="$SCRIPT_DIR/src/" -n "$DEMO_NAMESPACE" --follow
+  if oc get buildconfig "$IMAGE_NAME" -n "$DEMO_NAMESPACE" &>/dev/null; then
+    log "  BuildConfig already exists, starting new build..."
+  else
+    oc new-build --binary --name="$IMAGE_NAME" -n "$DEMO_NAMESPACE" --strategy=docker
+  fi
+
+  oc start-build "$IMAGE_NAME" --from-dir="$SCRIPT_DIR/src/" -n "$DEMO_NAMESPACE" --follow
+fi
 
 # ─── Step 5: Deploy OIDC proxy ───────────────────────────────────────────────
 

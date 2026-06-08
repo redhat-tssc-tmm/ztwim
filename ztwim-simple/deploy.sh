@@ -33,6 +33,16 @@ SPIRE_NAMESPACE="${SPIRE_NAMESPACE:-zero-trust-workload-identity-manager}"
 IMAGE_NAME="${IMAGE_NAME:-ztwim-simple}"
 SPIRE_OIDC_HOST="spire-oidc.${CLUSTER_DOMAIN}"
 
+# Set IMAGE_REGISTRY to use pre-built images from an external registry (e.g., quay.io/tssc_demos)
+# When unset, images are built in-cluster using oc new-build.
+IMAGE_REGISTRY="${IMAGE_REGISTRY:-}"
+IMAGE_TAG="${IMAGE_TAG:-latest}"
+if [ -n "$IMAGE_REGISTRY" ]; then
+  FULL_IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+else
+  FULL_IMAGE="image-registry.openshift-image-registry.svc:5000/${DEMO_NAMESPACE}/${IMAGE_NAME}:latest"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ─── Helper functions ────────────────────────────────────────────────────────
@@ -88,7 +98,9 @@ sed -i "s|name: ztwim-simple$|name: ${DEMO_NAMESPACE}|" "$SCRIPT_DIR/app/namespa
 
 # Image references
 for f in "$SCRIPT_DIR"/app/data-service.yaml "$SCRIPT_DIR"/app/consumer.yaml "$SCRIPT_DIR"/app/consumer-unauthorized.yaml; do
-  sed -i "s|image-registry.openshift-image-registry.svc:5000/[^/]*/[^:]*:latest|image-registry.openshift-image-registry.svc:5000/${DEMO_NAMESPACE}/${IMAGE_NAME}:latest|g" "$f"
+  sed -i "s|image: .*ztwim-simple:.*|image: ${FULL_IMAGE}|g" "$f"
+  sed -i "s|image: image-registry.openshift-image-registry.svc:5000/[^/]*/[^:]*:.*|image: ${FULL_IMAGE}|g" "$f"
+  sed -i "s|image: quay.io/[^/]*/ztwim-simple:.*|image: ${FULL_IMAGE}|g" "$f"
 done
 
 # Data service URL in consumers
@@ -140,17 +152,21 @@ oc apply -f "$SCRIPT_DIR/app/spiffe-helper-config.yaml"
 
 # ─── Step 4: Build the container image ───────────────────────────────────────
 
-log "Building container image..."
-
-cp "$SCRIPT_DIR/src/Containerfile" "$SCRIPT_DIR/src/Dockerfile"
-
-if oc get buildconfig "$IMAGE_NAME" -n "$DEMO_NAMESPACE" &>/dev/null; then
-  log "BuildConfig already exists, starting new build..."
+if [ -n "$IMAGE_REGISTRY" ]; then
+  log "Using pre-built image: $FULL_IMAGE"
+  log "  (skipping in-cluster build)"
 else
-  oc new-build --binary --name="$IMAGE_NAME" -n "$DEMO_NAMESPACE" --strategy=docker
-fi
+  log "Building container image in-cluster..."
+  cp "$SCRIPT_DIR/src/Containerfile" "$SCRIPT_DIR/src/Dockerfile"
 
-oc start-build "$IMAGE_NAME" --from-dir="$SCRIPT_DIR/src/" -n "$DEMO_NAMESPACE" --follow
+  if oc get buildconfig "$IMAGE_NAME" -n "$DEMO_NAMESPACE" &>/dev/null; then
+    log "  BuildConfig already exists, starting new build..."
+  else
+    oc new-build --binary --name="$IMAGE_NAME" -n "$DEMO_NAMESPACE" --strategy=docker
+  fi
+
+  oc start-build "$IMAGE_NAME" --from-dir="$SCRIPT_DIR/src/" -n "$DEMO_NAMESPACE" --follow
+fi
 
 # ─── Step 5: Deploy workloads ────────────────────────────────────────────────
 

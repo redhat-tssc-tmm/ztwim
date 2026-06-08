@@ -11,6 +11,67 @@ Both demos include fully automated deployment scripts that handle all cluster-sp
 
 Both scripts are **idempotent** — safe to re-run if something fails halfway.
 
+## Container Images
+
+The demo container images can either be built locally with Podman and pushed to an external registry, or built in-cluster using OpenShift's build system. Pre-building is recommended — it's faster and avoids build failures from cluster disk pressure.
+
+### Build locally and push to quay.io
+
+```bash
+# Log in to quay.io (one-time)
+podman login quay.io
+
+# Build and push both images
+./build-images.sh
+
+# Or build only one
+./build-images.sh simple
+./build-images.sh oidc
+```
+
+This pushes to `quay.io/tssc_demos/ztwim-simple:latest` and `quay.io/tssc_demos/ztwim-oidc:latest`. Override the registry and org with environment variables:
+
+```bash
+REGISTRY=quay.io ORG=my-org TAG=v1.0 ./build-images.sh
+```
+
+### Deploy using pre-built images
+
+Set `IMAGE_REGISTRY` before running the deploy scripts to skip the in-cluster build:
+
+```bash
+export IMAGE_REGISTRY=quay.io/tssc_demos
+
+cd ztwim-simple && ./deploy.sh     # uses quay.io/tssc_demos/ztwim-simple:latest
+cd ../ztwim-oidc && ./deploy.sh    # uses quay.io/tssc_demos/ztwim-oidc:latest
+```
+
+You can also override the tag:
+
+```bash
+export IMAGE_REGISTRY=quay.io/tssc_demos
+export IMAGE_TAG=v1.0
+```
+
+### Build in-cluster (original behavior)
+
+If `IMAGE_REGISTRY` is not set, the deploy scripts build the image on OpenShift using `oc new-build --binary`:
+
+```bash
+cd ztwim-simple && ./deploy.sh     # builds via oc start-build, pushes to internal registry
+```
+
+### Image repositories
+
+| Image | Source | Default registry |
+|-------|--------|------------------|
+| `ztwim-simple` | `ztwim-simple/src/` | `quay.io/tssc_demos/ztwim-simple` |
+| `ztwim-oidc` | `ztwim-oidc/src/` | `quay.io/tssc_demos/ztwim-oidc` |
+
+Both images are built from `Containerfile` using `registry.access.redhat.com/ubi9/python-311:latest` as the base. No pip dependencies — Python stdlib only.
+
+**Note**: When using an external registry, make sure the images are publicly accessible or that a pull secret is configured on the cluster.
+
 ## Quick Start
 
 ```bash
