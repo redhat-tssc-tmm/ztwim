@@ -9,9 +9,10 @@ set -euo pipefail
 #   - logged in to quay.io: podman login quay.io
 #
 # Usage:
-#   ./build-images.sh              # build and push both images
+#   ./build-images.sh              # build and push all images
 #   ./build-images.sh simple       # build and push only ztwim-simple
 #   ./build-images.sh oidc         # build and push only ztwim-oidc
+#   ./build-images.sh oidc-simple  # build and push only ztwim-oidc-simple
 #
 
 REGISTRY="${REGISTRY:-quay.io}"
@@ -46,6 +47,10 @@ if [ "$TARGET" = "all" ] || [ "$TARGET" = "oidc" ]; then
   build_and_push "ztwim-oidc" "${SCRIPT_DIR}/ztwim-oidc/src"
 fi
 
+if [ "$TARGET" = "all" ] || [ "$TARGET" = "oidc-simple" ]; then
+  build_and_push "ztwim-oidc-simple" "${SCRIPT_DIR}/ztwim-oidc-simple/src"
+fi
+
 log "=========================================="
 log "  Images built and pushed"
 log "=========================================="
@@ -53,6 +58,7 @@ log ""
 log "To use in deploy scripts, set:"
 log "  export IMAGE_REGISTRY=${REGISTRY}/${ORG}"
 log ""
-log "Or update the deployment YAMLs:"
-log "  ztwim-simple: ${REGISTRY}/${ORG}/ztwim-simple:${TAG}"
-log "  ztwim-oidc:   ${REGISTRY}/${ORG}/ztwim-oidc:${TAG}"
+log "Images:"
+log "  ztwim-simple:      ${REGISTRY}/${ORG}/ztwim-simple:${TAG}"
+log "  ztwim-oidc:        ${REGISTRY}/${ORG}/ztwim-oidc:${TAG}"
+log "  ztwim-oidc-simple: ${REGISTRY}/${ORG}/ztwim-oidc-simple:${TAG}"

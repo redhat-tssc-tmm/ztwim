@@ -1,33 +1,33 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: consumer-unauthorized
-  namespace: ztwim-simple
+  name: consumer
+  namespace: ztwim-oidc-simple
   labels:
-    app: consumer-unauthorized
+    app: consumer
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: consumer-unauthorized
+      app: consumer
   template:
     metadata:
       labels:
-        app: consumer-unauthorized
+        app: consumer
     spec:
-      serviceAccountName: consumer-unauthorized
+      serviceAccountName: oidc-consumer
       containers:
         - name: consumer
-          image: quay.io/tssc_demos/ztwim-simple:latest
+          image: quay.io/tssc_demos/ztwim-oidc-simple:latest
           command: ["python", "/app/consumer.py"]
           ports:
             - containerPort: 8080
               name: http
           env:
             - name: DATA_SERVICE_URL
-              value: "https://data-service.ztwim-simple.svc:8443/secret"
-            - name: SVID_DIR
-              value: "/certs"
+              value: "http://data-service.ztwim-oidc-simple.svc:8080/secret"
+            - name: JWT_FILE
+              value: "/certs/jwt_svid.token"
           volumeMounts:
             - name: certs
               mountPath: /certs
@@ -58,11 +58,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: consumer-unauthorized
-  namespace: ztwim-simple
+  name: consumer
+  namespace: ztwim-oidc-simple
 spec:
   selector:
-    app: consumer-unauthorized
+    app: consumer
   ports:
     - port: 8080
       targetPort: 8080
@@ -71,12 +71,12 @@ spec:
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
-  name: consumer-unauthorized
-  namespace: ztwim-simple
+  name: consumer
+  namespace: ztwim-oidc-simple
 spec:
   to:
     kind: Service
-    name: consumer-unauthorized
+    name: consumer
   port:
     targetPort: http
   tls:

@@ -1,13 +1,14 @@
 # ZTWIM Demo — Zero Trust Workload Identity Manager (SPIFFE/SPIRE)
 
-Two demos showcasing SPIFFE/SPIRE workload identity on OpenShift using the Red Hat Zero Trust Workload Identity Manager operator.
+Three demos showcasing SPIFFE/SPIRE workload identity on OpenShift using the Red Hat Zero Trust Workload Identity Manager operator.
 
-| Demo | What it shows | Identity type |
-|------|---------------|---------------|
-| [ztwim-simple](ztwim-simple/) | mTLS between workloads, application-level SPIFFE ID validation | X.509 SVID |
-| [ztwim-oidc](ztwim-oidc/) | JWT-SVID → Keycloak token exchange → access Trusted Profile Analyzer | JWT-SVID (OIDC) |
+| Demo | What it shows | Identity type | External deps |
+|------|---------------|---------------|---------------|
+| [ztwim-simple](ztwim-simple/) | mTLS between workloads, application-level SPIFFE ID validation | X.509 SVID | None |
+| [ztwim-oidc-simple](ztwim-oidc-simple/) | JWT-SVID as OIDC Bearer token, data-service validates against SPIRE JWKS | JWT-SVID (OIDC) | None |
+| [ztwim-oidc](ztwim-oidc/) | JWT-SVID → Keycloak token exchange → access Trusted Profile Analyzer | JWT-SVID (OIDC) | Keycloak + TPA |
 
-Both demos run on the same cluster simultaneously and share the same SPIRE infrastructure.
+All demos run on the same cluster simultaneously and share the same SPIRE infrastructure.
 
 ## Prerequisites
 
@@ -38,7 +39,7 @@ Both demo namespaces carry the label `spiffe.io/demo: "true"`, so all pods in bo
 
 ## Deployment Order
 
-The SPIRE infrastructure must be deployed before either demo. The two demos can then be deployed in any order, but `ztwim-oidc` depends on the infrastructure being fully ready.
+The SPIRE infrastructure must be deployed before any demo. The demos can then be deployed in any order or in parallel.
 
 ```
 Step 1: SPIRE Infrastructure (from ztwim-simple/infra/)
@@ -52,23 +53,24 @@ Step 1: SPIRE Infrastructure (from ztwim-simple/infra/)
               Verify: oc get zerotrustworkloadidentitymanager cluster -o jsonpath='{.status.conditions[0].message}'
               Should output: "All components are ready"
 
-Step 2: Deploy demos (either order, or both in parallel)
+Step 2: Deploy demos (any order, or all in parallel)
 
-        ┌─────────────────────────────────┐     ┌─────────────────────────────────┐
-        │  ztwim-simple                   │     │  ztwim-oidc                     │
-        │                                 │     │                                 │
-        │  1. oc apply -f app/namespace   │     │  1. Enable Keycloak token       │
-        │  2. oc apply -f app/sa, spiffeid│     │     exchange feature            │
-        │  3. Build image from src/       │     │  2. oc apply -f app/namespace   │
-        │  4. oc apply -f app/workloads   │     │  3. Build image from src/       │
-        │                                 │     │  4. Deploy OIDC proxy           │
-        │  Namepsace: ztwim-simple        │     │  5. Patch TPA auth.yaml         │
-        │  Uses: X.509 SVIDs (mTLS)       │     │  6. Run keycloak-setup.sh       │
-        │                                 │     │  7. oc apply -f app/workloads   │
-        │                                 │     │                                 │
-        │                                 │     │  Namespace: ztwim-oidc          │
-        │                                 │     │  Uses: JWT-SVIDs (OIDC)         │
-        └─────────────────────────────────┘     └─────────────────────────────────┘
+  ┌───────────────────────┐  ┌───────────────────────┐  ┌───────────────────────┐
+  │  ztwim-simple         │  │  ztwim-oidc-simple    │  │  ztwim-oidc           │
+  │                       │  │                       │  │                       │
+  │  1. Create namespace  │  │  1. Create namespace  │  │  1. Enable Keycloak   │
+  │  2. Apply SAs, SPIFFE │  │  2. Apply SAs, config │  │     token exchange    │
+  │  3. Build image       │  │  3. Build image       │  │  2. Create namespace  │
+  │  4. Deploy workloads  │  │  4. Deploy workloads  │  │  3. Build image       │
+  │                       │  │                       │  │  4. Deploy OIDC proxy │
+  │  NS: ztwim-simple     │  │  NS: ztwim-oidc-simple│  │  5. Patch TPA auth   │
+  │  Auth: mTLS (X.509)   │  │  Auth: JWT Bearer     │  │  6. Configure KC     │
+  │  Deps: none           │  │  Deps: none           │  │  7. Deploy workloads │
+  │                       │  │                       │  │                       │
+  └───────────────────────┘  └───────────────────────┘  │  NS: ztwim-oidc      │
+                                                        │  Auth: JWT→KC→TPA    │
+                                                        │  Deps: Keycloak, TPA │
+                                                        └───────────────────────┘
 ```
 
 ### Quick start (full deployment)
@@ -84,19 +86,20 @@ oc apply -f ztwim-simple/infra/spire-oidc-discovery.yaml
 # Wait for all SPIRE components
 oc get pods -n zero-trust-workload-identity-manager -w
 
-# Step 2a: ztwim-simple demo (see ztwim-simple/README.md for details)
-oc apply -f ztwim-simple/app/namespace.yaml
-oc apply -f ztwim-simple/app/service-accounts.yaml
-oc apply -f ztwim-simple/app/cluster-spiffeid.yaml
-oc apply -f ztwim-simple/app/spiffe-helper-config.yaml
-oc new-build --binary --name=ztwim-simple -n ztwim-simple --strategy=docker
-oc start-build ztwim-simple --from-dir=ztwim-simple/src/ -n ztwim-simple --follow
-oc apply -f ztwim-simple/app/data-service.yaml
-oc apply -f ztwim-simple/app/consumer.yaml
-oc apply -f ztwim-simple/app/consumer-unauthorized.yaml
+# Step 2a: ztwim-simple (mTLS demo — no external deps)
+cd ztwim-simple && ./deploy.sh && cd ..
 
-# Step 2b: ztwim-oidc demo (see ztwim-oidc/README.md for details)
-# ... requires Keycloak and TPA setup — follow ztwim-oidc/README.md
+# Step 2b: ztwim-oidc-simple (JWT Bearer demo — no external deps)
+cd ztwim-oidc-simple && ./deploy.sh && cd ..
+
+# Step 2c: ztwim-oidc (Keycloak + TPA demo — requires Keycloak and TPA)
+cd ztwim-oidc && ./deploy.sh && cd ..
+
+# Or with pre-built images:
+# export IMAGE_REGISTRY=quay.io/tssc_demos
+# cd ztwim-simple && ./deploy.sh && cd ..
+# cd ztwim-oidc-simple && ./deploy.sh && cd ..
+# cd ztwim-oidc && ./deploy.sh && cd ..
 ```
 
 ## Cluster-Specific Configuration
@@ -117,10 +120,9 @@ Route hostnames are generated automatically by OpenShift and do not need manual 
 ## Cleanup
 
 ```bash
-# Remove ztwim-oidc demo
+# Remove demos (any order)
 oc delete namespace ztwim-oidc
-
-# Remove ztwim-simple demo
+oc delete namespace ztwim-oidc-simple
 oc delete namespace ztwim-simple
 
 # Remove shared ClusterSPIFFEID

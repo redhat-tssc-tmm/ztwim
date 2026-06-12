@@ -18,7 +18,7 @@ spec:
       serviceAccountName: data-service
       containers:
         - name: data-service
-          image: image-registry.openshift-image-registry.svc:5000/ztwim-simple/ztwim-simple:latest
+          image: quay.io/tssc_demos/ztwim-simple:latest
           command: ["python", "/app/data_service.py"]
           ports:
             - containerPort: 8443

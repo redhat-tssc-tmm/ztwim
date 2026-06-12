@@ -1,33 +1,35 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: consumer-unauthorized
-  namespace: ztwim-simple
+  name: data-service
+  namespace: ztwim-oidc-simple
   labels:
-    app: consumer-unauthorized
+    app: data-service
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: consumer-unauthorized
+      app: data-service
   template:
     metadata:
       labels:
-        app: consumer-unauthorized
+        app: data-service
     spec:
-      serviceAccountName: consumer-unauthorized
+      serviceAccountName: data-service
       containers:
-        - name: consumer
-          image: quay.io/tssc_demos/ztwim-simple:latest
-          command: ["python", "/app/consumer.py"]
+        - name: data-service
+          image: quay.io/tssc_demos/ztwim-oidc-simple:latest
+          command: ["python", "/app/data_service.py"]
           ports:
             - containerPort: 8080
               name: http
           env:
-            - name: DATA_SERVICE_URL
-              value: "https://data-service.ztwim-simple.svc:8443/secret"
-            - name: SVID_DIR
-              value: "/certs"
+            - name: JWKS_URL
+              value: "https://spire-oidc.apps.cluster-lhnrw.dynamic2.redhatworkshops.io/keys"
+            - name: EXPECTED_AUDIENCE
+              value: "data-service"
+            - name: ALLOWED_SPIFFE_IDS
+              value: "spiffe://idc.com/ns/ztwim-oidc-simple/sa/oidc-consumer"
           volumeMounts:
             - name: certs
               mountPath: /certs
@@ -58,27 +60,12 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: consumer-unauthorized
-  namespace: ztwim-simple
+  name: data-service
+  namespace: ztwim-oidc-simple
 spec:
   selector:
-    app: consumer-unauthorized
+    app: data-service
   ports:
     - port: 8080
       targetPort: 8080
       name: http
----
-apiVersion: route.openshift.io/v1
-kind: Route
-metadata:
-  name: consumer-unauthorized
-  namespace: ztwim-simple
-spec:
-  to:
-    kind: Service
-    name: consumer-unauthorized
-  port:
-    targetPort: http
-  tls:
-    termination: edge
-    insecureEdgeTerminationPolicy: Redirect

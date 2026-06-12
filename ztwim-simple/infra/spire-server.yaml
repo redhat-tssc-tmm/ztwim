@@ -5,7 +5,7 @@ metadata:
 spec:
   logLevel: info
   logFormat: text
-  jwtIssuer: "https://spire-oidc.apps.cluster-ctpgl.dynamic2.redhatworkshops.io"
+  jwtIssuer: "https://spire-oidc.apps.cluster-lhnrw.dynamic2.redhatworkshops.io"
   caValidity: 24h
   defaultX509Validity: 1h
   defaultJWTValidity: 5m
